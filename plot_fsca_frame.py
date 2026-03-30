@@ -285,75 +285,91 @@ def build_mask(shapefile_path, h_tile=H_TILE, v_tile=V_TILE):
 
 
 # =====================================================================
-#  Read one frame from netCDF (handles SPIRES dimension order)
+#  Read one frame from netCDF (handles any SPIRES dimension order)
 # =====================================================================
 def read_frame_nc(nc_path, varname, row_min, col_min, nrows, ncols, time_idx=0):
     """Read a 2D slice from a SPIRES netCDF file.
 
-    SPIRES files have dimensions named (time, x, y) or (x, y, time) or (x, y).
-    Python's netCDF4 reports shape as (time=1, x=2400, y=2400).
-    We identify which dimension is time (size 1 or named 'time') and which
-    are x (cols) and y (rows), then slice accordingly and transpose to (row, col).
+    Inspects dimension names to determine ordering. The SPIRES files have
+    dimensions named 'time', 'x', and 'y'. Python netCDF4 may report them
+    in any order. We slice x with col indices and y with row indices,
+    then arrange the result as (row, col) = (y, x).
     """
     with nc4_Dataset(nc_path, "r") as ds:
         var = ds.variables[varname]
-        dims = var.dimensions  # tuple of dimension names
+        dims = var.dimensions
         shape = var.shape
+        ndim = var.ndim
 
-        if var.ndim == 3:
-            # Find the time dimension (by name or by being size 1)
-            time_dim = None
+        if ndim == 3:
+            # Classify each dimension as time, x, or y
+            dim_role = {}
             for d in range(3):
                 dname = dims[d].lower()
                 if "time" in dname or "day" in dname:
-                    time_dim = d; break
-            if time_dim is None:
-                # Fall back: the dimension with size 1 or the smallest
-                for d in range(3):
-                    if shape[d] == 1:
-                        time_dim = d; break
-                if time_dim is None:
-                    time_dim = 0  # default
-
-            # The other two dimensions are x and y
-            spatial = [d for d in range(3) if d != time_dim]
-
-            # Determine which spatial dim is x (cols) and which is y (rows)
-            # by checking dimension names
-            x_dim, y_dim = spatial[0], spatial[1]
-            for d in spatial:
-                dname = dims[d].lower()
-                if dname == "x":
-                    x_dim = d
+                    dim_role[d] = "time"
+                elif dname == "x":
+                    dim_role[d] = "x"
                 elif dname == "y":
-                    y_dim = d
+                    dim_role[d] = "y"
+
+            # If names didn't resolve all three, fall back
+            if len(dim_role) < 3:
+                # Assume the size-1 dim is time
+                for d in range(3):
+                    if d not in dim_role:
+                        if shape[d] == 1:
+                            dim_role[d] = "time"
+                # Remaining unassigned: first is x, second is y
+                unassigned = [d for d in range(3) if d not in dim_role]
+                labels = ["x", "y"]
+                for d, lbl in zip(unassigned, labels):
+                    dim_role[d] = lbl
 
             # Build the slice
             slices = [None, None, None]
-            slices[time_dim] = time_idx
-            slices[x_dim] = slice(col_min, col_min + ncols)
-            slices[y_dim] = slice(row_min, row_min + nrows)
+            for d in range(3):
+                role = dim_role[d]
+                if role == "time":
+                    slices[d] = time_idx
+                elif role == "x":
+                    slices[d] = slice(col_min, col_min + ncols)
+                elif role == "y":
+                    slices[d] = slice(row_min, row_min + nrows)
 
-            data = var[tuple(slices)]
+            data = np.squeeze(np.asarray(var[tuple(slices)], dtype=np.float64))
 
-        elif var.ndim == 2:
-            # Assume (x, y) based on dimension names
-            if dims[0].lower() == "y":
-                # (y, x) ordering
-                data = var[row_min:row_min+nrows, col_min:col_min+ncols]
-                frame = np.asarray(data, dtype=np.float64)
-                return frame  # already (row, col)
+            # Determine output axis order: we need (row, col) = (y, x)
+            # After squeeze (time removed), the remaining axes are in
+            # the same relative order as the non-time dims
+            spatial_order = [dim_role[d] for d in range(3) if dim_role[d] != "time"]
+            if spatial_order == ["x", "y"]:
+                # data is (x, y) = (cols, rows) → transpose
+                data = data.T
+            # else data is (y, x) = (rows, cols) → already correct
+
+        elif ndim == 2:
+            d0 = dims[0].lower()
+            d1 = dims[1].lower()
+            if d0 == "x" and d1 == "y":
+                # (x, y) = (col, row)
+                data = np.asarray(
+                    var[col_min:col_min+ncols, row_min:row_min+nrows],
+                    dtype=np.float64).T
+            elif d0 == "y" and d1 == "x":
+                # (y, x) = (row, col) — already correct
+                data = np.asarray(
+                    var[row_min:row_min+nrows, col_min:col_min+ncols],
+                    dtype=np.float64)
             else:
-                # (x, y) ordering
-                data = var[col_min:col_min+ncols, row_min:row_min+nrows]
+                # Unknown names — assume (x, y)
+                data = np.asarray(
+                    var[col_min:col_min+ncols, row_min:row_min+nrows],
+                    dtype=np.float64).T
         else:
-            raise ValueError(f"Unexpected ndim={var.ndim} for {varname}")
+            raise ValueError(f"Unexpected ndim={ndim} for {varname}")
 
-    frame = np.squeeze(np.asarray(data, dtype=np.float64))
-    # Result is (x, y) = (cols, rows) -> transpose to (rows, cols)
-    if frame.ndim == 2:
-        frame = frame.T
-    return frame
+    return data
 
 
 # =====================================================================
@@ -460,7 +476,7 @@ def plot_fsca_frame(nc_file=None, shapefile_path=None, mask_file=None,
                 raise ValueError(f"No fSCA variable found. Available: {list(ds.variables.keys())}")
             print(f"  Using variable: {fsca_var}")
             var = ds.variables[fsca_var]
-            print(f"  Variable: {fsca_var}, shape: {var.shape}")
+            print(f"  Variable: {fsca_var}, shape: {var.shape}, dims: {var.dimensions}")
 
             # Read attributes
             fill_val = getattr(var, "_FillValue", None)
