@@ -207,23 +207,14 @@ function [fig, ax] = plot_fsca_frame(varargin)
         dt = NaN;
 
         if length(vi.Size) == 3
-            % --- Multi-day file: extract one time slice ---
-            dim_names = {vi.Dimensions.Name};
-            time_dim = 0;
-            for d = 1:3
-                if contains(lower(dim_names{d}),'time') || contains(lower(dim_names{d}),'day')
-                    time_dim = d; break;
-                end
-            end
-            if time_dim == 0; time_dim = 3; end
-            spatial_dims = setdiff(1:3, time_dim);
-
-            s = ones(1,3); c = [vi.Dimensions.Length];
-            s(time_dim) = tidx; c(time_dim) = 1;
-            s(spatial_dims(1)) = row_min; c(spatial_dims(1)) = nrows;
-            s(spatial_dims(2)) = col_min; c(spatial_dims(2)) = ncols;
-            slice = squeeze(ncread(args.nc_file, fsca_var, s, c));
-            if size(slice,1) ~= nrows; slice = slice'; end
+            % --- SPIRES files are (x, y, time) = (2400, 2400, 1) ---
+            %     dim1=x (sinusoidal easting = our columns)
+            %     dim2=y (sinusoidal northing = our rows)
+            %     dim3=time
+            %     ncread start/count must match this order: [col, row, time]
+            slice = squeeze(ncread(args.nc_file, fsca_var, ...
+                            [col_min, row_min, tidx], [ncols, nrows, 1]));
+            slice = double(slice');  % transpose so result is (row, col)
 
             % Try to read date from time variable
             for tname = {'time','Time','date','day'}
@@ -245,9 +236,10 @@ function [fig, ax] = plot_fsca_frame(varargin)
             end
 
         elseif length(vi.Size) == 2
-            % --- Single-day file (e.g. SPIRES_HIST_h09v04_MOD09GA061_20200315_V1.0.nc) ---
-            slice = ncread(args.nc_file, fsca_var, [row_min col_min], [nrows ncols]);
-            if size(slice,1) ~= nrows; slice = slice'; end
+            % --- Single-day 2D file: dims are (x, y) ---
+            slice = double(ncread(args.nc_file, fsca_var, ...
+                           [col_min, row_min], [ncols, nrows]));
+            slice = slice';  % transpose to (row, col)
         end
 
         % --- Read a companion variable to detect unobserved pixels ---
@@ -259,16 +251,14 @@ function [fig, ax] = plot_fsca_frame(varargin)
         unobs_mask = false(size(slice));
         try
             if any(strcmp(var_names, 'grain_size'))
-                gs = ncread(args.nc_file, 'grain_size', [row_min col_min 1], [nrows ncols 1]);
-                gs = squeeze(gs);
-                if size(gs,1) ~= nrows; gs = gs'; end
-                % Unobserved: snow_fraction==0 AND grain_size==0
+                gs = squeeze(ncread(args.nc_file, 'grain_size', ...
+                             [col_min, row_min, 1], [ncols, nrows, 1]));
+                gs = double(gs');
                 unobs_mask = (slice == 0) & (gs == 0);
             elseif any(strcmp(var_names, 'viewable_snow_fraction'))
-                vsf = ncread(args.nc_file, 'viewable_snow_fraction', [row_min col_min 1], [nrows ncols 1]);
-                vsf = squeeze(vsf);
-                if size(vsf,1) ~= nrows; vsf = vsf'; end
-                % Unobserved: both snow_fraction and viewable_snow_fraction are 0
+                vsf = squeeze(ncread(args.nc_file, 'viewable_snow_fraction', ...
+                              [col_min, row_min, 1], [ncols, nrows, 1]));
+                vsf = double(vsf');
                 unobs_mask = (slice == 0) & (vsf == 0);
             end
         catch
@@ -446,25 +436,15 @@ function [fig, ax] = plot_fsca_frame(varargin)
         fprintf('  Re-reading data with expanded range [%dx%d]...\n', rd_nrows, rd_ncols);
         info_v = ncinfo(args.nc_file, fsca_var);
         if length(info_v.Size) == 3
-            dim_names_v = {info_v.Dimensions.Name};
-            td = 0;
-            for d = 1:3
-                if contains(lower(dim_names_v{d}),'time') || contains(lower(dim_names_v{d}),'day')
-                    td = d; break;
-                end
-            end
-            if td == 0; td = 3; end
-            sd = setdiff(1:3, td);
-            ss = ones(1,3); cc_rd = [info_v.Dimensions.Length];
-            ss(td) = tidx; cc_rd(td) = 1;
-            ss(sd(1)) = rd_row_min; cc_rd(sd(1)) = rd_nrows;
-            ss(sd(2)) = rd_col_min; cc_rd(sd(2)) = rd_ncols;
-            slice_exp = double(squeeze(ncread(args.nc_file, fsca_var, ss, cc_rd)));
+            % (x, y, time) -> start=[col, row, time]
+            slice_exp = double(squeeze(ncread(args.nc_file, fsca_var, ...
+                        [rd_col_min, rd_row_min, tidx], [rd_ncols, rd_nrows, 1])));
+            slice_exp = slice_exp';  % transpose to (row, col)
         else
             slice_exp = double(ncread(args.nc_file, fsca_var, ...
-                              [rd_row_min rd_col_min], [rd_nrows rd_ncols]));
+                              [rd_col_min, rd_row_min], [rd_ncols, rd_nrows]));
+            slice_exp = slice_exp';
         end
-        if size(slice_exp,1) ~= rd_nrows; slice_exp = slice_exp'; end
 
         % Apply filtering on expanded data (basin clipping done by lookup)
         if isfinite(fill_val); slice_exp(slice_exp == fill_val) = NaN; end
@@ -474,12 +454,13 @@ function [fig, ax] = plot_fsca_frame(varargin)
         try
             if any(strcmp(var_names, 'grain_size'))
                 if length(info_v.Size) == 3
-                    gs_exp = double(squeeze(ncread(args.nc_file, 'grain_size', ss, cc_rd)));
+                    gs_exp = double(squeeze(ncread(args.nc_file, 'grain_size', ...
+                             [rd_col_min, rd_row_min, tidx], [rd_ncols, rd_nrows, 1])));
                 else
                     gs_exp = double(ncread(args.nc_file, 'grain_size', ...
-                                   [rd_row_min rd_col_min], [rd_nrows rd_ncols]));
+                                   [rd_col_min, rd_row_min], [rd_ncols, rd_nrows]));
                 end
-                if size(gs_exp,1) ~= rd_nrows; gs_exp = gs_exp'; end
+                gs_exp = gs_exp';
                 slice_exp((slice_exp == 0) & (gs_exp == 0)) = NaN;
             end
         catch; end

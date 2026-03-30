@@ -915,33 +915,20 @@ end
 
 function frame = read_one_frame(nc_path, varname, time_idx, ...
                                  read_row_min, read_col_min, read_nrows, read_ncols)
-    % Read one 2D frame from a netCDF file, handling both 2D and 3D variables.
+    % Read one 2D frame from a SPIRES netCDF file.
+    % SPIRES files use (x, y, time) dimension order where:
+    %   dim1 = x (sinusoidal easting = columns)
+    %   dim2 = y (sinusoidal northing = rows)
+    % ncread start/count must be [col, row, time], then transpose.
     info_v = ncinfo(nc_path, varname);
-    ndv = length(info_v.Size);
 
-    if ndv == 3
-        % Determine time dimension
-        dim_names = {info_v.Dimensions.Name};
-        time_dim = 0;
-        for d = 1:3
-            if contains(lower(dim_names{d}), 'time') || contains(lower(dim_names{d}), 'day')
-                time_dim = d; break;
-            end
-        end
-        if time_dim == 0; time_dim = 3; end
-        spatial_dims = setdiff(1:3, time_dim);
-
-        s = ones(1,3); c = [info_v.Dimensions.Length];
-        s(time_dim) = time_idx; c(time_dim) = 1;
-        s(spatial_dims(1)) = read_row_min; c(spatial_dims(1)) = read_nrows;
-        s(spatial_dims(2)) = read_col_min; c(spatial_dims(2)) = read_ncols;
-        frame = double(squeeze(ncread(nc_path, varname, s, c)));
+    if length(info_v.Size) == 3
+        frame = double(squeeze(ncread(nc_path, varname, ...
+                [read_col_min, read_row_min, time_idx], ...
+                [read_ncols, read_nrows, 1])));
     else
         frame = double(ncread(nc_path, varname, ...
-                       [read_row_min, read_col_min], [read_nrows, read_ncols]));
+                [read_col_min, read_row_min], [read_ncols, read_nrows]));
     end
-
-    if size(frame, 1) ~= read_nrows
-        frame = frame';
-    end
+    frame = frame';  % transpose from (col, row) to (row, col)
 end
