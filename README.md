@@ -22,6 +22,7 @@ SPIRES HIST V01 from NSIDC:
 
 ### Python
 ```
+NOTE: PYTHON IS CURRENTLY NOT WORKING!!!! PLEASE USE MATLAB.
 pip install netCDF4 numpy matplotlib pyshp imageio[ffmpeg]
 ```
 
