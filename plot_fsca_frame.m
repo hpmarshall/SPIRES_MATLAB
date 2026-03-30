@@ -419,19 +419,25 @@ function [fig, ax] = plot_fsca_frame(varargin)
         local_row = reshape(local_row, nr2, nc2);
         vl = reshape(vl, nr2, nc2);
 
-        % Embed the original mask into the expanded range
-        mask_exp = false(rd_nrows, rd_ncols);
-        r_off = row_min - rd_row_min;
-        c_off = col_min - rd_col_min;
-        mask_exp(r_off+1 : r_off+nrows, c_off+1 : c_off+ncols) = mask;
-
-        % Build lookup
+        % Build lookup — test basin membership using the sinusoidal
+        % coordinates of each UTM output cell (not the pre-built mask,
+        % which only covers the tight subset and misses expanded pixels)
+        fprintf('  Building lookup with basin polygon test...\n');
         sli = zeros(nr2, nc2);
+        sx2_grid = reshape(sx2, nr2, nc2);
+        sy2_grid = reshape(sy2, nr2, nc2);
         for rr = 1:nr2
             for cc = 1:nc2
-                if vl(rr,cc) && mask_exp(local_row(rr,cc), local_col(rr,cc))
-                    sli(rr,cc) = sub2ind([rd_nrows rd_ncols], ...
-                                          local_row(rr,cc), local_col(rr,cc));
+                if vl(rr,cc)
+                    % Test if this sinusoidal point is inside the basin
+                    for pp = 1:length(all_poly_x_sin)
+                        if inpolygon(sx2_grid(rr,cc), sy2_grid(rr,cc), ...
+                                     all_poly_x_sin{pp}, all_poly_y_sin{pp})
+                            sli(rr,cc) = sub2ind([rd_nrows rd_ncols], ...
+                                                  local_row(rr,cc), local_col(rr,cc));
+                            break;
+                        end
+                    end
                 end
             end
         end
@@ -460,8 +466,7 @@ function [fig, ax] = plot_fsca_frame(varargin)
         end
         if size(slice_exp,1) ~= rd_nrows; slice_exp = slice_exp'; end
 
-        % Apply filtering on expanded data
-        slice_exp(~mask_exp) = NaN;
+        % Apply filtering on expanded data (basin clipping done by lookup)
         if isfinite(fill_val); slice_exp(slice_exp == fill_val) = NaN; end
         slice_exp(slice_exp < valid_min | slice_exp > valid_max) = NaN;
 

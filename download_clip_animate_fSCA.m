@@ -340,28 +340,32 @@ function download_clip_animate_fSCA(water_year, shapefile_path, varargin)
     local_row_idx = reshape(local_row_idx, nr_out, nc_out);
     valid_lookup  = reshape(valid_lookup,  nr_out, nc_out);
 
-    % Also need a mask for the expanded read range
-    % (the original mask covers col_min:col_max, row_min:row_max;
-    %  we embed it into the expanded range)
-    mask_expanded = false(read_nrows, read_ncols);
-    r_off = row_min - read_row_min;
-    c_off = col_min - read_col_min;
-    mask_expanded(r_off+1 : r_off+nrows, c_off+1 : c_off+ncols) = mask;
-
-    % Build linear index for fast lookup
+    % Build linear index — test basin membership using sinusoidal coords
+    % of each UTM output cell (not the pre-built mask, which only covers
+    % the tight subset and misses expanded-range pixels)
+    fprintf('  Building lookup with basin polygon test...\n');
+    sin_x_lookup = reshape(sin_x_out, nr_out, nc_out);
+    sin_y_lookup = reshape(sin_y_out, nr_out, nc_out);
     src_lin_idx = zeros(nr_out, nc_out);
     for r = 1:nr_out
         for c = 1:nc_out
             if valid_lookup(r,c)
-                lr = local_row_idx(r,c);
-                lc = local_col_idx(r,c);
-                if mask_expanded(lr, lc)
-                    src_lin_idx(r,c) = sub2ind([read_nrows, read_ncols], lr, lc);
+                in_basin = false;
+                for pp = 1:length(all_poly_x_sin)
+                    if inpolygon(sin_x_lookup(r,c), sin_y_lookup(r,c), ...
+                                 all_poly_x_sin{pp}, all_poly_y_sin{pp})
+                        in_basin = true; break;
+                    end
+                end
+                if in_basin
+                    src_lin_idx(r,c) = sub2ind([read_nrows, read_ncols], ...
+                                               local_row_idx(r,c), local_col_idx(r,c));
                 end
             end
         end
     end
     mask_out = src_lin_idx > 0;
+    fprintf('  Output grid: %d basin pixels mapped\n', sum(mask_out(:)));
 
     % --- Re-read data with expanded range and reproject ---
     fprintf('  Re-reading data with expanded range and reprojecting %d frames...\n', length(dates));
@@ -376,8 +380,7 @@ function download_clip_animate_fSCA(water_year, shapefile_path, varargin)
         fr_exp = read_one_frame(nc_path_t, fsca_varname, nc_tidx_t, ...
                                 read_row_min, read_col_min, read_nrows, read_ncols);
 
-        % Apply mask, fill, valid range
-        fr_exp(~mask_expanded) = NaN;
+        % Apply fill and valid range filtering (basin clip done by lookup)
         if isfinite(fill_val); fr_exp(fr_exp == fill_val) = NaN; end
         fr_exp(fr_exp < valid_min_attr | fr_exp > valid_max_attr) = NaN;
 
