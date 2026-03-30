@@ -160,30 +160,26 @@ def utm2latlon(easting, northing, zone=UTM_ZONE):
 # =====================================================================
 def points_in_polygon(px, py, poly_x, poly_y):
     """Test whether points (px, py) lie inside polygon (poly_x, poly_y).
-    Returns boolean array of shape px.shape."""
+    Uses the ray-casting algorithm. Returns boolean array."""
     px = np.asarray(px, dtype=np.float64).ravel()
     py = np.asarray(py, dtype=np.float64).ravel()
     vx = np.asarray(poly_x, dtype=np.float64)
     vy = np.asarray(poly_y, dtype=np.float64)
     n = len(vx)
     inside = np.zeros(len(px), dtype=bool)
-    xj, yj = vx[-1], vy[-1]
     for i in range(n):
+        j = (i - 1) % n
         xi, yi = vx[i], vy[i]
-        cond = (yi > py) != (yj > py)
-        slope_x = (xj - xi) * (py - yi) / (yj - yi) + xi
-        inside[cond & (px < slope_x[cond] if isinstance(slope_x, np.ndarray) else px[cond] < slope_x)] ^= True
-        xj, yj = xi, yi
-    # Simpler but correct loop version for robustness:
-    inside2 = np.zeros(len(px), dtype=bool)
-    for i in range(n):
-        xi, yi = vx[i], vy[i]
-        xj2, yj2 = vx[i-1], vy[i-1]
-        cross = ((yi > py) != (yj2 > py))
-        if np.any(cross):
-            x_int = (xj2 - xi) * (py[cross] - yi) / (yj2 - yi) + xi
-            inside2[cross] ^= (px[cross] < x_int)
-    return inside2
+        xj, yj = vx[j], vy[j]
+        # Which points have the test ray crossing this edge?
+        crossing = (yi > py) != (yj > py)
+        if not np.any(crossing):
+            continue
+        # X-intercept of the edge at the y-value of each crossing point
+        x_int = (xj - xi) * (py[crossing] - yi) / (yj - yi) + xi
+        # Toggle inside/outside for points to the left of the intercept
+        inside[crossing] ^= (px[crossing] < x_int)
+    return inside
 
 
 def points_in_polygons(px, py, polys_x, polys_y):
