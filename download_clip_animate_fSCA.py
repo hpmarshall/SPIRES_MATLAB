@@ -433,7 +433,8 @@ def main():
     col_min = int(m["col_min"]); col_max = int(m["col_max"])
     nrows = int(m["nrows"]); ncols = int(m["ncols"])
     x_origin = float(m["x_origin"]); y_origin = float(m["y_origin"])
-    all_poly_x_sin = m["all_poly_x_sin"]; all_poly_y_sin = m["all_poly_y_sin"]
+    all_poly_x_sin = [np.asarray(p, dtype=np.float64) for p in m["all_poly_x_sin"]]
+    all_poly_y_sin = [np.asarray(p, dtype=np.float64) for p in m["all_poly_y_sin"]]
     utm_zone = int(m.get("utm_zone", UTM_ZONE))
     print(f"  Basin: {mask.sum()} pixels ({mask.sum()*0.25:.1f} km²)")
 
