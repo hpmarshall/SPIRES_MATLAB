@@ -191,7 +191,22 @@ def extract_fsca_wy(nc_files, wy_start, wy_end):
         var = ds.variables[fvar]
 
         if var.ndim == 3:
-            nt = var.shape[2]  # SPIRES: (x, y, time)
+            # Find time dimension by name (not by position — Python may reorder)
+            dims = var.dimensions
+            time_dim_idx = None
+            for d in range(3):
+                dname = dims[d].lower()
+                if "time" in dname or "day" in dname:
+                    time_dim_idx = d; break
+            if time_dim_idx is None:
+                # Fallback: the dimension with size 1
+                for d in range(3):
+                    if var.shape[d] == 1:
+                        time_dim_idx = d; break
+                if time_dim_idx is None:
+                    time_dim_idx = 0  # last resort
+
+            nt = var.shape[time_dim_idx]
             time_var = None
             for tname in ["time", "Time", "date", "day"]:
                 if tname in ds.variables:
