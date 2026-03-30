@@ -285,26 +285,74 @@ def build_mask(shapefile_path, h_tile=H_TILE, v_tile=V_TILE):
 
 
 # =====================================================================
-#  Read one frame from netCDF (handles SPIRES (x, y, time) order)
+#  Read one frame from netCDF (handles SPIRES dimension order)
 # =====================================================================
 def read_frame_nc(nc_path, varname, row_min, col_min, nrows, ncols, time_idx=0):
     """Read a 2D slice from a SPIRES netCDF file.
 
-    SPIRES files use (x, y, time) dimension order where:
-      dim0 = x (sinusoidal easting = columns)
-      dim1 = y (sinusoidal northing = rows)
-    Python netCDF4 uses 0-based slicing and returns (x, y), so we
-    slice [col_min:col_min+ncols, row_min:row_min+nrows] then transpose.
+    SPIRES files have dimensions named (time, x, y) or (x, y, time) or (x, y).
+    Python's netCDF4 reports shape as (time=1, x=2400, y=2400).
+    We identify which dimension is time (size 1 or named 'time') and which
+    are x (cols) and y (rows), then slice accordingly and transpose to (row, col).
     """
     with nc4_Dataset(nc_path, "r") as ds:
         var = ds.variables[varname]
+        dims = var.dimensions  # tuple of dimension names
+        shape = var.shape
+
         if var.ndim == 3:
-            data = var[col_min:col_min+ncols, row_min:row_min+nrows, time_idx]
+            # Find the time dimension (by name or by being size 1)
+            time_dim = None
+            for d in range(3):
+                dname = dims[d].lower()
+                if "time" in dname or "day" in dname:
+                    time_dim = d; break
+            if time_dim is None:
+                # Fall back: the dimension with size 1 or the smallest
+                for d in range(3):
+                    if shape[d] == 1:
+                        time_dim = d; break
+                if time_dim is None:
+                    time_dim = 0  # default
+
+            # The other two dimensions are x and y
+            spatial = [d for d in range(3) if d != time_dim]
+
+            # Determine which spatial dim is x (cols) and which is y (rows)
+            # by checking dimension names
+            x_dim, y_dim = spatial[0], spatial[1]
+            for d in spatial:
+                dname = dims[d].lower()
+                if dname == "x":
+                    x_dim = d
+                elif dname == "y":
+                    y_dim = d
+
+            # Build the slice
+            slices = [None, None, None]
+            slices[time_dim] = time_idx
+            slices[x_dim] = slice(col_min, col_min + ncols)
+            slices[y_dim] = slice(row_min, row_min + nrows)
+
+            data = var[tuple(slices)]
+
         elif var.ndim == 2:
-            data = var[col_min:col_min+ncols, row_min:row_min+nrows]
+            # Assume (x, y) based on dimension names
+            if dims[0].lower() == "y":
+                # (y, x) ordering
+                data = var[row_min:row_min+nrows, col_min:col_min+ncols]
+                frame = np.asarray(data, dtype=np.float64)
+                return frame  # already (row, col)
+            else:
+                # (x, y) ordering
+                data = var[col_min:col_min+ncols, row_min:row_min+nrows]
         else:
             raise ValueError(f"Unexpected ndim={var.ndim} for {varname}")
-    frame = np.asarray(data, dtype=np.float64).T  # transpose to (row, col)
+
+    frame = np.squeeze(np.asarray(data, dtype=np.float64))
+    # Result is (x, y) = (cols, rows) -> transpose to (rows, cols)
+    if frame.ndim == 2:
+        frame = frame.T
     return frame
 
 
