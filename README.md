@@ -22,8 +22,7 @@ SPIRES HIST V01 from NSIDC:
 
 ### Python
 ```
-NOTE: PYTHON IS CURRENTLY NOT WORKING!!!! PLEASE USE MATLAB.
-pip install netCDF4 numpy matplotlib pyshp imageio[ffmpeg]
+pip install netCDF4 numpy matplotlib pyshp Pillow
 ```
 
 ### MATLAB
@@ -33,7 +32,7 @@ pip install netCDF4 numpy matplotlib pyshp imageio[ffmpeg]
 
 ### Python
 ```bash
-python download_clip_animate_fSCA.py --year 2020 --shapefile BRB_outline.shp
+python plot_fsca_frame.py SPIRES_HIST_h09v04_MOD09GA061_20150201_V1.0.nc BRB_outline.shp
 ```
 
 ### MATLAB — Quick look at one day
